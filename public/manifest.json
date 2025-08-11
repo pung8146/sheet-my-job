@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Sheet-My-Job",
+  "version": "0.1.0",
+  "description": "지원하는 채용 공고를 구글 시트에 자동으로 저장합니다.",
+  "permissions": ["identity"],
+  "action": {
+    "default_popup": "index.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "oauth2": {
+    "client_id": "libphcejekkmogmiemmomanedhbbiidp",
+    "scopes": ["https://www.googleapis.com/auth/spreadsheets"]
+  }
+}
