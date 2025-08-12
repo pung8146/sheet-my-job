@@ -2,6 +2,32 @@
 
 console.log("Sheet-My-Job: Content Script is running on this page.");
 
+// 허용된 페이지(도메인/경로)에서만 동작하도록 가드
+const ALLOWED_RULES = [
+  { hostPattern: /(^|\.)wanted\.co\.kr$/ },
+  // 필요 시 아래와 같이 추가 가능
+  // { hostPattern: /(^|\.)saramin\.co\.kr$/ },
+  // { hostPattern: /(^|\.)jobkorea\.co\.kr$/ },
+];
+
+function isAllowedPage() {
+  try {
+    const { hostname, pathname } = window.location;
+    return ALLOWED_RULES.some((rule) => {
+      const hostOk = rule.hostPattern.test(hostname);
+      const pathOk = rule.pathPattern ? rule.pathPattern.test(pathname) : true;
+      return hostOk && pathOk;
+    });
+  } catch {
+    return false;
+  }
+}
+
+const __SMJ_ALLOWED__ = isAllowedPage();
+if (!__SMJ_ALLOWED__) {
+  console.log("Sheet-My-Job: This page is not in the allowlist. Skipping.");
+}
+
 // 간단한 토스트 유틸리티
 function ensureToastContainer() {
   if (document.getElementById("smj-toast-container")) return;
@@ -46,49 +72,50 @@ function showToast(message, type = "success", durationMs = 2800) {
 
 // 이 스크립트는 페이지가 로드될 때마다 실행됩니다.
 // 지금은 테스트를 위해, 페이지의 아무 곳이나 클릭하면 메시지를 보내도록 설정합니다.
-document.body.addEventListener("click", () => {
-  console.log("A click was detected on the page.");
+if (__SMJ_ALLOWED__)
+  document.body.addEventListener("click", () => {
+    console.log("A click was detected on the page.");
 
-  // 나중에는 실제 지원 데이터를 추출해서 보낼 겁니다.
-  const jobData = {
-    platform: "Test Platform",
-    company: "Test Company Inc.",
-    title: "Frontend Developer",
-    date: new Date().toISOString().split("T")[0],
-    link: window.location.href,
-  };
+    // 나중에는 실제 지원 데이터를 추출해서 보낼 겁니다.
+    const jobData = {
+      platform: "Test Platform",
+      company: "Test Company Inc.",
+      title: "Frontend Developer",
+      date: new Date().toISOString().split("T")[0],
+      link: window.location.href,
+    };
 
-  // background.js로 메시지를 보냅니다.
-  chrome.runtime.sendMessage(
-    {
-      type: "SAVE_JOB_DATA",
-      data: jobData,
-    },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.error("Message sending failed:", chrome.runtime.lastError);
-        showToast(
-          `저장 실패: ${
-            chrome.runtime.lastError.message || "메시지 전송 오류"
-          }`,
-          "error"
-        );
-        return;
+    // background.js로 메시지를 보냅니다.
+    chrome.runtime.sendMessage(
+      {
+        type: "SAVE_JOB_DATA",
+        data: jobData,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Message sending failed:", chrome.runtime.lastError);
+          showToast(
+            `저장 실패: ${
+              chrome.runtime.lastError.message || "메시지 전송 오류"
+            }`,
+            "error"
+          );
+          return;
+        }
+        if (!response) {
+          showToast("저장 실패: 응답 없음", "error");
+          return;
+        }
+        if (response.status === "에러") {
+          console.error("Background error:", response.message);
+          showToast(
+            `저장 실패: ${response.message || "알 수 없는 오류"}`,
+            "error"
+          );
+        } else {
+          console.log("Background script responded:", response.status);
+          showToast("저장 성공: 구글 시트에 기록되었습니다.", "success");
+        }
       }
-      if (!response) {
-        showToast("저장 실패: 응답 없음", "error");
-        return;
-      }
-      if (response.status === "에러") {
-        console.error("Background error:", response.message);
-        showToast(
-          `저장 실패: ${response.message || "알 수 없는 오류"}`,
-          "error"
-        );
-      } else {
-        console.log("Background script responded:", response.status);
-        showToast("저장 성공: 구글 시트에 기록되었습니다.", "success");
-      }
-    }
-  );
-});
+    );
+  });
