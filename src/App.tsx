@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 // 사용자 정보 객체의 타입을 정의합니다.
@@ -125,43 +125,104 @@ function App() {
     }
   };
 
-  // [디버깅 추가됨] 토큰에 포함된 권한 범위를 확인하는 함수
-  const checkTokenScopes = async (token: string) => {
+  // [개선] 토큰 스코프를 반환하도록 변경 (공백 구분 배열)
+  const checkTokenScopes = async (token: string): Promise<string[]> => {
     try {
       const response = await fetch(
         `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`
       );
       const data = await response.json();
-      console.log("✅ 현재 토큰이 가진 권한(Scopes):", data.scope);
+      const scopes: string[] =
+        typeof data.scope === "string" ? data.scope.split(" ") : [];
+      console.log("✅ 현재 토큰이 가진 권한(Scopes):", scopes.join(", "));
+      return scopes;
     } catch (err) {
       console.error("🚨 토큰 정보 확인 중 에러:", err);
+      return [];
     }
   };
 
-  // [수정됨] 로그인 시도 전에 이전 토큰을 강제로 삭제합니다.
+  // [신규] 팝업이 열릴 때 자동으로 기존 세션을 복구 (비대화형 토큰 사용)
+  useEffect(() => {
+    chrome.identity.getAuthToken({ interactive: false }, async (token) => {
+      if (!token) return;
+
+      const authToken = token as string;
+      const scopes = await checkTokenScopes(authToken);
+      const required = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/userinfo.email",
+      ];
+      const hasAllRequired = required.every((s) => scopes.includes(s));
+      if (!hasAllRequired) {
+        // 스코프가 부족하면 자동 복구를 시도하지 않음 (사용자가 로그인 버튼을 통해 재동의)
+        console.warn("필수 스코프가 부족하여 자동 세션 복구 생략");
+        return;
+      }
+
+      try {
+        const userInfoResponse = await fetch(
+          "https://www.googleapis.com/oauth2/v2/userinfo",
+          { headers: { Authorization: `Bearer ${authToken}` } }
+        );
+        const userData: UserInfo = await userInfoResponse.json();
+        setUserInfo(userData);
+        // 저장된 시트가 유효하면 상태만 갱신, 없으면 검색/생성 수행
+        await findOrCreateSheet(authToken);
+      } catch (e) {
+        console.warn("자동 세션 복구 중 문제 발생", e);
+      }
+    });
+  }, []);
+
+  // [개선] 스코프가 충분하면 기존 토큰을 재사용, 부족할 때만 재동의 유도
   const handleLogin = () => {
     console.log("🔵 handleLogin: 로그인 프로세스 시작.");
     setError("");
     setSheetStatus("");
 
-    // 1. 기존에 캐시된 토큰이 있다면 먼저 삭제하여 새로운 권한을 요청하도록 강제합니다.
-    chrome.identity.getAuthToken({ interactive: false }, (currentToken) => {
-      if (currentToken) {
-        // [수정됨] currentToken을 string으로 캐스팅하여 타입 에러 해결
-        chrome.identity.removeCachedAuthToken(
-          { token: currentToken as string },
-          () => {
-            console.log(
-              "🔵 handleLogin: 기존 토큰 캐시 삭제 완료. 새로운 토큰 요청 시작."
-            );
-            requestNewAuthToken();
+    chrome.identity.getAuthToken(
+      { interactive: false },
+      async (existingToken) => {
+        if (existingToken) {
+          const authToken = existingToken as string;
+          const scopes = await checkTokenScopes(authToken);
+          const required = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.metadata.readonly",
+            "https://www.googleapis.com/auth/userinfo.email",
+          ];
+          const hasAllRequired = required.every((s) => scopes.includes(s));
+
+          if (hasAllRequired) {
+            try {
+              const userInfoResponse = await fetch(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                { headers: { Authorization: `Bearer ${authToken}` } }
+              );
+              const userData: UserInfo = await userInfoResponse.json();
+              setUserInfo(userData);
+              await findOrCreateSheet(authToken);
+              return;
+            } catch (e) {
+              console.warn("기존 토큰 사용 중 문제 -> 재동의 시도", e);
+            }
+          } else {
+            console.log("필수 스코프 부족 -> 캐시 토큰 제거 후 재동의 요청");
+            chrome.identity.removeCachedAuthToken({ token: authToken }, () => {
+              requestNewAuthToken();
+            });
+            return;
           }
+        }
+
+        console.log(
+          "🔵 handleLogin: 기존 토큰 없음 또는 사용 불가. 새로운 토큰 요청 시작."
         );
-      } else {
-        console.log("🔵 handleLogin: 기존 토큰 없음. 새로운 토큰 요청 시작.");
         requestNewAuthToken();
       }
-    });
+    );
   };
 
   const requestNewAuthToken = () => {
@@ -180,7 +241,6 @@ function App() {
       }
       const authToken = token as string;
       console.log("🔵 handleLogin: 토큰을 성공적으로 받았습니다.");
-
       await checkTokenScopes(authToken);
 
       try {
