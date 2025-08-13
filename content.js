@@ -115,8 +115,20 @@ if (__SMJ_ALLOWED__) {
       }
       if (!result.title) {
         const titleEl = document.querySelector('[data-qa="job-title"], h1');
-        result.title =
-          (titleEl?.textContent || document.title || "").trim() || null;
+        result.title = (titleEl?.textContent || "").trim() || null;
+      }
+      if (!result.title) {
+        const isAppliedPage = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/.test(
+          location.pathname
+        );
+        if (!isAppliedPage) {
+          const metaTitle = document
+            .querySelector(
+              'meta[property="og:title"], meta[name="twitter:title"]'
+            )
+            ?.getAttribute("content");
+          result.title = (metaTitle || "").trim() || null;
+        }
       }
     } catch {}
     return result;
@@ -174,7 +186,7 @@ if (__SMJ_ALLOWED__) {
     lastTriggerAt = nowTs;
     console.log(`SMJ: 지원 완료 감지됨 (source=${source})`);
 
-    // TODO: 원티드 DOM에서 실제 회사/포지션을 추출하도록 개선 가능
+    // 원티드 DOM에서 정확한 값 추출 시도 (상세 URL에서만 유효한 엘리먼트 대비 캐시 포함)
     const fallback = extractWantedCompanyAndTitle();
     const jobData = {
       platform: "Wanted",
@@ -205,6 +217,17 @@ if (__SMJ_ALLOWED__) {
         const extracted = extractWantedCompanyAndTitle();
         if (extracted.company) wantedContext.company = extracted.company;
         if (extracted.title) wantedContext.title = extracted.title;
+        // 상세 페이지에서 파싱한 값을 캐시하여 applied에서도 사용
+        try {
+          sessionStorage.setItem(
+            `smj_wanted_${id}`,
+            JSON.stringify({
+              company: wantedContext.company || "",
+              title: wantedContext.title || "",
+              __savedAt: Date.now(),
+            })
+          );
+        } catch {}
       }
     } catch {}
   }
@@ -225,6 +248,15 @@ if (__SMJ_ALLOWED__) {
       });
       if (m) {
         const id = m[1];
+        // applied 페이지에서는 상세 DOM이 비어있을 수 있으므로 직전 캐시 복구
+        try {
+          const cached = sessionStorage.getItem(`smj_wanted_${id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.company) wantedContext.company = parsed.company;
+            if (parsed?.title) wantedContext.title = parsed.title;
+          }
+        } catch {}
         wantedContext.jobId = id;
         wantedContext.jobUrl = `${location.origin}/wd/${id}`;
         onApplyCompleted("url-wanted");
@@ -275,6 +307,14 @@ if (__SMJ_ALLOWED__) {
       });
       if (m) {
         const id = m[1];
+        try {
+          const cached = sessionStorage.getItem(`smj_wanted_${id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.company) wantedContext.company = parsed.company;
+            if (parsed?.title) wantedContext.title = parsed.title;
+          }
+        } catch {}
         wantedContext.jobId = id;
         wantedContext.jobUrl = `${location.origin}/wd/${id}`;
         onApplyCompleted("url-wanted-poll");
