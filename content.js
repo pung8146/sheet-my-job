@@ -27,6 +27,12 @@ const __SMJ_ALLOWED__ = isAllowedPage();
 if (!__SMJ_ALLOWED__) {
   console.log("Sheet-My-Job: This page is not in the allowlist. Skipping.");
 }
+if (__SMJ_ALLOWED__) {
+  console.log("SMJ: allowed page", {
+    href: location.href,
+    path: location.pathname,
+  });
+}
 
 // 간단한 토스트 유틸리티
 function ensureToastContainer() {
@@ -70,22 +76,63 @@ function showToast(message, type = "success", durationMs = 2800) {
   }
 }
 
-// 이 스크립트는 페이지가 로드될 때마다 실행됩니다.
-// 지금은 테스트를 위해, 페이지의 아무 곳이나 클릭하면 메시지를 보내도록 설정합니다.
-if (__SMJ_ALLOWED__)
-  document.body.addEventListener("click", () => {
-    console.log("A click was detected on the page.");
+// 지원 완료 시점에서만 동작하도록 감지기 구성
+if (__SMJ_ALLOWED__) {
+  // 중복 실행 방지
+  let hasTriggered = false;
+  let lastTriggerAt = 0;
+  const TRIGGER_COOLDOWN_MS = 5000;
+  let lastJobIdTriggered = null;
 
-    // 나중에는 실제 지원 데이터를 추출해서 보낼 겁니다.
-    const jobData = {
-      platform: "Test Platform",
-      company: "Test Company Inc.",
-      title: "Frontend Developer",
-      date: new Date().toISOString().split("T")[0],
-      link: window.location.href,
-    };
+  // 원티드 상세 페이지에서 정보 캐시
+  const wantedContext = {
+    jobId: null,
+    jobUrl: null,
+    company: null,
+    title: null,
+  };
 
-    // background.js로 메시지를 보냅니다.
+  function extractWantedCompanyAndTitle() {
+    const result = { company: null, title: null };
+    try {
+      const anchor = document.querySelector(
+        "a[data-company-name][data-position-name]"
+      );
+      if (anchor) {
+        const companyAttr = anchor.getAttribute("data-company-name");
+        const positionAttr = anchor.getAttribute("data-position-name");
+        result.company =
+          (companyAttr || anchor.textContent || "").trim() || null;
+        result.title = (positionAttr || "").trim() || null;
+      }
+      if (!result.company) {
+        const companyEl = document.querySelector(
+          '[data-qa="company-name"], [data-company], a[data-company-name]'
+        );
+        const companyAttr2 = companyEl?.getAttribute?.("data-company-name");
+        result.company =
+          (companyAttr2 || companyEl?.textContent || "").trim() || null;
+      }
+      if (!result.title) {
+        const titleEl = document.querySelector('[data-qa="job-title"], h1');
+        result.title =
+          (titleEl?.textContent || document.title || "").trim() || null;
+      }
+    } catch {}
+    return result;
+  }
+
+  function nowLocalDateTime() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(
+      now.getDate()
+    )} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(
+      now.getSeconds()
+    )}`;
+  }
+
+  function sendToBackground(jobData) {
     chrome.runtime.sendMessage(
       {
         type: "SAVE_JOB_DATA",
@@ -118,4 +165,127 @@ if (__SMJ_ALLOWED__)
         }
       }
     );
-  });
+  }
+
+  function onApplyCompleted(source = "unknown") {
+    const nowTs = Date.now();
+    if (hasTriggered && nowTs - lastTriggerAt < TRIGGER_COOLDOWN_MS) return;
+    hasTriggered = true;
+    lastTriggerAt = nowTs;
+    console.log(`SMJ: 지원 완료 감지됨 (source=${source})`);
+
+    // TODO: 원티드 DOM에서 실제 회사/포지션을 추출하도록 개선 가능
+    const fallback = extractWantedCompanyAndTitle();
+    const jobData = {
+      platform: "Wanted",
+      company:
+        (wantedContext.company && wantedContext.company.trim()) ||
+        (fallback.company && fallback.company.trim()) ||
+        "",
+      title:
+        (wantedContext.title && wantedContext.title.trim()) ||
+        (fallback.title && fallback.title.trim()) ||
+        "",
+      date: nowLocalDateTime(),
+      link:
+        wantedContext.jobUrl ||
+        window.location.href.replace(/\/(applied)([/?#].*)?$/, ""),
+    };
+    sendToBackground(jobData);
+  }
+
+  function captureWantedDetailContext() {
+    try {
+      const detailPattern = /^\/wd\/(\d+)(?:\/(?:applied))?(?:[\/?#]|$)/;
+      const m = window.location.pathname.match(detailPattern);
+      if (m) {
+        const id = m[1];
+        wantedContext.jobId = id;
+        wantedContext.jobUrl = `${location.origin}/wd/${id}`;
+        const extracted = extractWantedCompanyAndTitle();
+        if (extracted.company) wantedContext.company = extracted.company;
+        if (extracted.title) wantedContext.title = extracted.title;
+      }
+    } catch {}
+  }
+
+  // 1) URL 변경(완료 페이지) 감지: SPA 대응 (원티드 전용)
+  (function interceptHistory() {
+    const appliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
+    const detailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
+    function checkUrl() {
+      // 상세 페이지에 있을 때 컨텍스트 갱신
+      captureWantedDetailContext();
+      // 완료 페이지 진입 시 저장
+      const m = window.location.pathname.match(appliedPattern);
+      console.log("SMJ: checkUrl(history)", {
+        pathname: location.pathname,
+        matched: Boolean(m),
+        id: m?.[1] || null,
+      });
+      if (m) {
+        const id = m[1];
+        wantedContext.jobId = id;
+        wantedContext.jobUrl = `${location.origin}/wd/${id}`;
+        onApplyCompleted("url-wanted");
+        lastJobIdTriggered = id;
+        return;
+      }
+      // 상세 페이지로 이동 시 다음 트리거를 위해 리셋
+      const d = window.location.pathname.match(detailPattern);
+      if (d && d[1] !== lastJobIdTriggered) {
+        hasTriggered = false;
+        console.log("SMJ: reset trigger for new detail page", d[1]);
+      }
+    }
+    const pushState = history.pushState;
+    const replaceState = history.replaceState;
+    history.pushState = function () {
+      const r = pushState.apply(this, arguments);
+      setTimeout(checkUrl, 0);
+      return r;
+    };
+    history.replaceState = function () {
+      const r = replaceState.apply(this, arguments);
+      setTimeout(checkUrl, 0);
+      return r;
+    };
+    window.addEventListener("popstate", checkUrl);
+    window.addEventListener("hashchange", checkUrl);
+    // 초기 체크
+    checkUrl();
+  })();
+
+  // 1-b) SPA에서 history monkey patch가 격리될 수 있어 주기적 경로 감시
+  (function watchPathname() {
+    const appliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
+    const detailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
+    let lastPathname = location.pathname;
+    setInterval(() => {
+      const current = location.pathname;
+      if (current === lastPathname) return;
+      lastPathname = current;
+      // 상세 정보 갱신 및 완료 감지
+      captureWantedDetailContext();
+      const m = current.match(appliedPattern);
+      console.log("SMJ: checkUrl(poll)", {
+        pathname: current,
+        matched: Boolean(m),
+        id: m?.[1] || null,
+      });
+      if (m) {
+        const id = m[1];
+        wantedContext.jobId = id;
+        wantedContext.jobUrl = `${location.origin}/wd/${id}`;
+        onApplyCompleted("url-wanted-poll");
+        lastJobIdTriggered = id;
+        return;
+      }
+      const d = current.match(detailPattern);
+      if (d && d[1] !== lastJobIdTriggered) {
+        hasTriggered = false;
+        console.log("SMJ: reset trigger for new detail page (poll)", d[1]);
+      }
+    }, 400);
+  })();
+}

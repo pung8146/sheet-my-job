@@ -48,7 +48,7 @@ async function appendToSheet(spreadsheetId, token, data) {
       data.platform,
       data.company,
       data.title, // 공고 제목
-      data.date, // 지원일
+      data.date, // 지원일시 (yyyy-MM-dd HH:mm:ss)
       data.link, // 공고 링크
     ],
   ];

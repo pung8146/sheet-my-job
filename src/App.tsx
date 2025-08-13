@@ -98,7 +98,7 @@ function App() {
       chrome.storage.local.set({ spreadsheetId });
 
       const headers = [
-        ["플랫폼", "회사명", "공고 제목", "지원일", "공고 링크"],
+        ["플랫폼", "회사명", "공고 제목", "지원일시", "공고 링크"],
       ];
       await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=USER_ENTERED`,

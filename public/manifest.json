@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sheet-My-Job",
-  "version": "0.1.8",
+  "version": "0.2.1",
   "description": "지원하는 채용 공고를 구글 시트에 자동으로 저장합니다.",
   "permissions": ["identity", "storage"],
   "host_permissions": ["<all_urls>"],
