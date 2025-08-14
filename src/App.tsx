@@ -315,7 +315,7 @@ function App() {
             {/* [수정됨] statusMessage -> sheetStatus 오타 수정 */}
             {sheetStatus && <p className="status-message">{sheetStatus}</p>}
             <div className="button-group">
-              <button onClick={handleLogout}>로그아웃 (리셋)</button>
+              <button onClick={handleLogout}>로그아웃 </button>
               <button onClick={handleDisconnectSheet}>시트 연결 끊기</button>
             </div>
           </div>
