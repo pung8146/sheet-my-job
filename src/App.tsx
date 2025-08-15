@@ -151,7 +151,7 @@ function App() {
       const scopes = await checkTokenScopes(authToken);
       const required = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/userinfo.email",
       ];
       const hasAllRequired = required.every((s) => scopes.includes(s));
@@ -190,7 +190,7 @@ function App() {
           const scopes = await checkTokenScopes(authToken);
           const required = [
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.metadata.readonly",
+            "https://www.googleapis.com/auth/drive",
             "https://www.googleapis.com/auth/userinfo.email",
           ];
           const hasAllRequired = required.every((s) => scopes.includes(s));
