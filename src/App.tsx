@@ -11,6 +11,7 @@ function App() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [error, setError] = useState<string>("");
   const [sheetStatus, setSheetStatus] = useState<string>(""); // 시트 생성 상태를 추적
+  const [isSheetConnected, setIsSheetConnected] = useState<boolean>(false); // 시트 연결 상태를 추적
 
   // [업그레이드됨] 구글 드라이브를 먼저 검색하고, 없으면 생성하는 함수
   const findOrCreateSheet = async (token: string) => {
@@ -38,6 +39,7 @@ function App() {
           );
           if (verifyResponse.ok) {
             setSheetStatus("저장된 스프레드시트를 찾았습니다.");
+            setIsSheetConnected(true);
             return;
           }
           // 유효하지 않은 경우 스토리지에서 제거하고 계속 진행합니다.
@@ -75,6 +77,7 @@ function App() {
         const spreadsheetId = searchData.files[0].id;
         chrome.storage.local.set({ spreadsheetId });
         setSheetStatus("기존 스프레드시트를 찾아서 연결했습니다.");
+        setIsSheetConnected(true);
         return;
       }
 
@@ -113,6 +116,7 @@ function App() {
       );
 
       setSheetStatus("🎉 새로운 스프레드시트가 생성되었습니다!");
+      setIsSheetConnected(true);
     } catch (err: unknown) {
       // [수정됨] any 타입 대신 unknown 사용
       console.error("🚨 시트 처리 중 에러:", err);
@@ -122,6 +126,7 @@ function App() {
         setError("시트 처리 중 알 수 없는 오류가 발생했습니다.");
       }
       setSheetStatus("");
+      setIsSheetConnected(false);
     }
   };
 
@@ -289,6 +294,7 @@ function App() {
       setUserInfo(null);
       setSheetStatus("");
       setError("");
+      setIsSheetConnected(false);
       console.log("🔴 handleLogout: 앱 상태 초기화 완료.");
     });
   };
@@ -296,12 +302,23 @@ function App() {
   const handleDisconnectSheet = () => {
     if (chrome.storage && chrome.storage.local) {
       chrome.storage.local.remove("spreadsheetId", () => {
-        setSheetStatus(
-          "시트 연결이 끊어졌습니다. 다음에 로그인하면 기존 시트를 다시 검색합니다."
-        );
+        setSheetStatus("시트 연결이 끊어졌습니다.");
+        setIsSheetConnected(false);
         console.log("🟡 handleDisconnectSheet: 시트 ID만 삭제 완료.");
       });
     }
+  };
+
+  // [신규] 시트 다시 찾기 함수
+  const handleReconnectSheet = async () => {
+    chrome.identity.getAuthToken({ interactive: false }, async (token) => {
+      if (!token) {
+        setError("토큰이 없습니다. 다시 로그인해주세요.");
+        return;
+      }
+      const authToken = token as string;
+      await findOrCreateSheet(authToken);
+    });
   };
 
   return (
@@ -316,7 +333,11 @@ function App() {
             {sheetStatus && <p className="status-message">{sheetStatus}</p>}
             <div className="button-group">
               <button onClick={handleLogout}>로그아웃 </button>
-              <button onClick={handleDisconnectSheet}>시트 연결 끊기</button>
+              {isSheetConnected ? (
+                <button onClick={handleDisconnectSheet}>시트 연결 끊기</button>
+              ) : (
+                <button onClick={handleReconnectSheet}>다시 찾기</button>
+              )}
             </div>
           </div>
         ) : (
