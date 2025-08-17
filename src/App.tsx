@@ -42,8 +42,11 @@ function App() {
             setIsSheetConnected(true);
             return;
           }
-          // 유효하지 않은 경우 스토리지에서 제거하고 계속 진행합니다.
+          // 유효하지 않은 경우 (404 등) 스토리지에서 제거하고 계속 진행합니다.
           chrome.storage.local.remove("spreadsheetId");
+          if (verifyResponse.status === 404) {
+            setSheetStatus("기존 시트를 찾을 수 없어 새로 검색합니다...");
+          }
           console.warn(
             "저장된 스프레드시트 ID가 유효하지 않아 제거했습니다. 새로 검색/생성합니다."
           );
@@ -81,7 +84,9 @@ function App() {
         return;
       }
 
-      setSheetStatus("새로운 스프레드시트를 생성 중입니다...");
+      setSheetStatus(
+        "기존 시트를 찾을 수 없어 새로운 스프레드시트를 생성 중입니다..."
+      );
       const createResponse = await fetch(
         "https://sheets.googleapis.com/v4/spreadsheets",
         {
@@ -121,7 +126,19 @@ function App() {
       // [수정됨] any 타입 대신 unknown 사용
       console.error("🚨 시트 처리 중 에러:", err);
       if (err instanceof Error) {
-        setError("시트 처리 중 오류가 발생했습니다: " + err.message);
+        // 시트를 찾을 수 없는 경우 구체적인 메시지 표시
+        if (
+          err.message.includes("Drive Search Error") ||
+          err.message.includes("404")
+        ) {
+          setError(
+            "시트를 찾을 수 없습니다. '다시 찾기' 버튼을 눌러 새로운 시트를 생성해보세요."
+          );
+        } else if (err.message.includes("Sheet Creation Error")) {
+          setError("시트 생성 중 오류가 발생했습니다: " + err.message);
+        } else {
+          setError("시트 처리 중 오류가 발생했습니다: " + err.message);
+        }
       } else {
         setError("시트 처리 중 알 수 없는 오류가 발생했습니다.");
       }
