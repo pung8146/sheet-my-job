@@ -5,8 +5,8 @@ console.log("Sheet-My-Job: Content Script is running on this page.");
 // 허용된 페이지(도메인/경로)에서만 동작하도록 가드
 const ALLOWED_RULES = [
   { hostPattern: /(^|\.)wanted\.co\.kr$/ },
+  { hostPattern: /(^|\.)saramin\.co\.kr$/ },
   // 필요 시 아래와 같이 추가 가능
-  // { hostPattern: /(^|\.)saramin\.co\.kr$/ },
   // { hostPattern: /(^|\.)jobkorea\.co\.kr$/ },
 ];
 
@@ -92,6 +92,14 @@ if (__SMJ_ALLOWED__) {
     title: null,
   };
 
+  // 사람인 상세 페이지에서 정보 캐시
+  const saraminContext = {
+    jobId: null,
+    jobUrl: null,
+    company: null,
+    title: null,
+  };
+
   function extractWantedCompanyAndTitle() {
     const result = { company: null, title: null };
     try {
@@ -131,6 +139,81 @@ if (__SMJ_ALLOWED__) {
         }
       }
     } catch {}
+    return result;
+  }
+
+  function extractSaraminCompanyAndTitle() {
+    const result = { company: null, title: null };
+    try {
+      // 사람인 채용공고 페이지에서 회사명 추출 시도
+      const companySelectors = [
+        ".company_nm",
+        ".company-name",
+        ".info_company .company",
+        ".company_info .company_nm",
+        "h2.company_nm",
+        "[data-company-name]",
+        ".company_area .company_nm",
+      ];
+
+      for (const selector of companySelectors) {
+        const el = document.querySelector(selector);
+        if (el) {
+          const text =
+            el.textContent?.trim() ||
+            el.getAttribute("data-company-name")?.trim();
+          if (text) {
+            result.company = text;
+            break;
+          }
+        }
+      }
+
+      // 사람인 채용공고 페이지에서 제목 추출 시도
+      const titleSelectors = [
+        ".job_tit",
+        ".job-title",
+        ".recruit_title",
+        "h1.job_tit",
+        ".title_job",
+        ".job_title",
+        "h1",
+        "h2.job_tit",
+      ];
+
+      for (const selector of titleSelectors) {
+        const el = document.querySelector(selector);
+        if (el) {
+          const text = el.textContent?.trim();
+          if (text) {
+            result.title = text;
+            break;
+          }
+        }
+      }
+
+      // 메타 태그에서 추출 시도 (fallback)
+      if (!result.title) {
+        const metaTitle = document
+          .querySelector(
+            'meta[property="og:title"], meta[name="twitter:title"]'
+          )
+          ?.getAttribute("content");
+        if (metaTitle) {
+          result.title = metaTitle.trim();
+        }
+      }
+
+      // URL에서 회사 정보 추출 시도 (fallback)
+      if (!result.company) {
+        const urlMatch = location.pathname.match(/\/company\/(\d+)/);
+        if (urlMatch) {
+          // 필요 시 회사 ID로 추가 정보 추출 로직 구현 가능
+        }
+      }
+    } catch (e) {
+      console.log("사람인 정보 추출 중 오류:", e);
+    }
     return result;
   }
 
@@ -179,30 +262,62 @@ if (__SMJ_ALLOWED__) {
     );
   }
 
-  function onApplyCompleted(source = "unknown") {
+  function onApplyCompleted(source = "unknown", platform = "auto") {
     const nowTs = Date.now();
     if (hasTriggered && nowTs - lastTriggerAt < TRIGGER_COOLDOWN_MS) return;
     hasTriggered = true;
     lastTriggerAt = nowTs;
-    console.log(`SMJ: 지원 완료 감지됨 (source=${source})`);
+    console.log(
+      `SMJ: 지원 완료 감지됨 (source=${source}, platform=${platform})`
+    );
 
-    // 원티드 DOM에서 정확한 값 추출 시도 (상세 URL에서만 유효한 엘리먼트 대비 캐시 포함)
-    const fallback = extractWantedCompanyAndTitle();
-    const jobData = {
-      platform: "Wanted",
-      company:
-        (wantedContext.company && wantedContext.company.trim()) ||
-        (fallback.company && fallback.company.trim()) ||
-        "",
-      title:
-        (wantedContext.title && wantedContext.title.trim()) ||
-        (fallback.title && fallback.title.trim()) ||
-        "",
-      date: nowLocalDateTime(),
-      link:
-        wantedContext.jobUrl ||
-        window.location.href.replace(/\/(applied)([/?#].*)?$/, ""),
-    };
+    // 플랫폼 자동 감지
+    if (platform === "auto") {
+      if (window.location.hostname.includes("wanted.co.kr")) {
+        platform = "wanted";
+      } else if (window.location.hostname.includes("saramin.co.kr")) {
+        platform = "saramin";
+      }
+    }
+
+    let jobData;
+
+    if (platform === "saramin") {
+      // 사람인 DOM에서 정확한 값 추출 시도
+      const fallback = extractSaraminCompanyAndTitle();
+      jobData = {
+        platform: "사람인",
+        company:
+          (saraminContext.company && saraminContext.company.trim()) ||
+          (fallback.company && fallback.company.trim()) ||
+          "",
+        title:
+          (saraminContext.title && saraminContext.title.trim()) ||
+          (fallback.title && fallback.title.trim()) ||
+          "",
+        date: nowLocalDateTime(),
+        link: saraminContext.jobUrl || window.location.href,
+      };
+    } else {
+      // 원티드 DOM에서 정확한 값 추출 시도 (상세 URL에서만 유효한 엘리먼트 대비 캐시 포함)
+      const fallback = extractWantedCompanyAndTitle();
+      jobData = {
+        platform: "Wanted",
+        company:
+          (wantedContext.company && wantedContext.company.trim()) ||
+          (fallback.company && fallback.company.trim()) ||
+          "",
+        title:
+          (wantedContext.title && wantedContext.title.trim()) ||
+          (fallback.title && fallback.title.trim()) ||
+          "",
+        date: nowLocalDateTime(),
+        link:
+          wantedContext.jobUrl ||
+          window.location.href.replace(/\/(applied)([/?#].*)?$/, ""),
+      };
+    }
+
     sendToBackground(jobData);
   }
 
@@ -232,22 +347,60 @@ if (__SMJ_ALLOWED__) {
     } catch {}
   }
 
-  // 1) URL 변경(완료 페이지) 감지: SPA 대응 (원티드 전용)
-  (function interceptHistory() {
-    const appliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
-    const detailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
-    function checkUrl() {
-      // 상세 페이지에 있을 때 컨텍스트 갱신
-      captureWantedDetailContext();
-      // 완료 페이지 진입 시 저장
-      const m = window.location.pathname.match(appliedPattern);
-      console.log("SMJ: checkUrl(history)", {
-        pathname: location.pathname,
-        matched: Boolean(m),
-        id: m?.[1] || null,
-      });
+  function captureSaraminDetailContext() {
+    try {
+      // 사람인 채용공고 상세 페이지 패턴 감지
+      const detailPattern = /^\/zf_user\/jobs\/view\/([0-9a-zA-Z]+)/;
+      const m = window.location.pathname.match(detailPattern);
       if (m) {
         const id = m[1];
+        saraminContext.jobId = id;
+        saraminContext.jobUrl = window.location.href.split("?")[0]; // 쿼리 파라미터 제거
+        const extracted = extractSaraminCompanyAndTitle();
+        if (extracted.company) saraminContext.company = extracted.company;
+        if (extracted.title) saraminContext.title = extracted.title;
+
+        // 사람인 상세 페이지에서 파싱한 값을 캐시
+        try {
+          sessionStorage.setItem(
+            `smj_saramin_${id}`,
+            JSON.stringify({
+              company: saraminContext.company || "",
+              title: saraminContext.title || "",
+              __savedAt: Date.now(),
+            })
+          );
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // 1) URL 변경(완료 페이지) 감지: SPA 대응
+  (function interceptHistory() {
+    // 원티드 패턴
+    const wantedAppliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
+    const wantedDetailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
+    // 사람인 패턴 (지원 완료 감지)
+    const saraminAppliedPattern = /^\/zf_user\/apply\/complete/;
+    const saraminDetailPattern = /^\/zf_user\/jobs\/view\/([0-9a-zA-Z]+)/;
+
+    function checkUrl() {
+      // 플랫폼별 상세 페이지 컨텍스트 갱신
+      if (window.location.hostname.includes("wanted.co.kr")) {
+        captureWantedDetailContext();
+      } else if (window.location.hostname.includes("saramin.co.kr")) {
+        captureSaraminDetailContext();
+      }
+
+      // 원티드 완료 페이지 감지
+      const wantedMatch = window.location.pathname.match(wantedAppliedPattern);
+      console.log("SMJ: checkUrl(history) - wanted", {
+        pathname: location.pathname,
+        matched: Boolean(wantedMatch),
+        id: wantedMatch?.[1] || null,
+      });
+      if (wantedMatch) {
+        const id = wantedMatch[1];
         // applied 페이지에서는 상세 DOM이 비어있을 수 있으므로 직전 캐시 복구
         try {
           const cached = sessionStorage.getItem(`smj_wanted_${id}`);
@@ -259,15 +412,53 @@ if (__SMJ_ALLOWED__) {
         } catch {}
         wantedContext.jobId = id;
         wantedContext.jobUrl = `${location.origin}/wd/${id}`;
-        onApplyCompleted("url-wanted");
+        onApplyCompleted("url-wanted", "wanted");
         lastJobIdTriggered = id;
         return;
       }
+
+      // 사람인 완료 페이지 감지
+      const saraminMatch = window.location.pathname.match(
+        saraminAppliedPattern
+      );
+      console.log("SMJ: checkUrl(history) - saramin", {
+        pathname: location.pathname,
+        matched: Boolean(saraminMatch),
+      });
+      if (saraminMatch) {
+        // Referrer나 세션에서 이전 채용공고 정보 복구
+        try {
+          const referrer = document.referrer;
+          const referrerMatch = referrer.match(saraminDetailPattern);
+          if (referrerMatch) {
+            const id = referrerMatch[1];
+            const cached = sessionStorage.getItem(`smj_saramin_${id}`);
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (parsed?.company) saraminContext.company = parsed.company;
+              if (parsed?.title) saraminContext.title = parsed.title;
+              saraminContext.jobId = id;
+              saraminContext.jobUrl = `${location.protocol}//${location.hostname}/zf_user/jobs/view/${id}`;
+            }
+          }
+        } catch {}
+        onApplyCompleted("url-saramin", "saramin");
+        return;
+      }
+
       // 상세 페이지로 이동 시 다음 트리거를 위해 리셋
-      const d = window.location.pathname.match(detailPattern);
-      if (d && d[1] !== lastJobIdTriggered) {
+      const wantedDetail = window.location.pathname.match(wantedDetailPattern);
+      const saraminDetail =
+        window.location.pathname.match(saraminDetailPattern);
+      if (
+        (wantedDetail && wantedDetail[1] !== lastJobIdTriggered) ||
+        (saraminDetail && saraminDetail[1] !== lastJobIdTriggered)
+      ) {
         hasTriggered = false;
-        console.log("SMJ: reset trigger for new detail page", d[1]);
+        console.log(
+          "SMJ: reset trigger for new detail page",
+          wantedDetail?.[1] || saraminDetail?.[1]
+        );
       }
     }
     const pushState = history.pushState;
@@ -290,23 +481,35 @@ if (__SMJ_ALLOWED__) {
 
   // 1-b) SPA에서 history monkey patch가 격리될 수 있어 주기적 경로 감시
   (function watchPathname() {
-    const appliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
-    const detailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
+    // 원티드 패턴
+    const wantedAppliedPattern = /^\/wd\/(\d+)\/applied(?:[\/?#]|$)/;
+    const wantedDetailPattern = /^\/wd\/(\d+)(?:[\/?#]|$)/;
+    // 사람인 패턴
+    const saraminAppliedPattern = /^\/zf_user\/apply\/complete/;
+    const saraminDetailPattern = /^\/zf_user\/jobs\/view\/([0-9a-zA-Z]+)/;
+
     let lastPathname = location.pathname;
     setInterval(() => {
       const current = location.pathname;
       if (current === lastPathname) return;
       lastPathname = current;
-      // 상세 정보 갱신 및 완료 감지
-      captureWantedDetailContext();
-      const m = current.match(appliedPattern);
-      console.log("SMJ: checkUrl(poll)", {
+
+      // 플랫폼별 상세 정보 갱신
+      if (window.location.hostname.includes("wanted.co.kr")) {
+        captureWantedDetailContext();
+      } else if (window.location.hostname.includes("saramin.co.kr")) {
+        captureSaraminDetailContext();
+      }
+
+      // 원티드 완료 감지
+      const wantedMatch = current.match(wantedAppliedPattern);
+      console.log("SMJ: checkUrl(poll) - wanted", {
         pathname: current,
-        matched: Boolean(m),
-        id: m?.[1] || null,
+        matched: Boolean(wantedMatch),
+        id: wantedMatch?.[1] || null,
       });
-      if (m) {
-        const id = m[1];
+      if (wantedMatch) {
+        const id = wantedMatch[1];
         try {
           const cached = sessionStorage.getItem(`smj_wanted_${id}`);
           if (cached) {
@@ -317,14 +520,50 @@ if (__SMJ_ALLOWED__) {
         } catch {}
         wantedContext.jobId = id;
         wantedContext.jobUrl = `${location.origin}/wd/${id}`;
-        onApplyCompleted("url-wanted-poll");
+        onApplyCompleted("url-wanted-poll", "wanted");
         lastJobIdTriggered = id;
         return;
       }
-      const d = current.match(detailPattern);
-      if (d && d[1] !== lastJobIdTriggered) {
+
+      // 사람인 완료 감지
+      const saraminMatch = current.match(saraminAppliedPattern);
+      console.log("SMJ: checkUrl(poll) - saramin", {
+        pathname: current,
+        matched: Boolean(saraminMatch),
+      });
+      if (saraminMatch) {
+        // Referrer나 세션에서 이전 채용공고 정보 복구
+        try {
+          const referrer = document.referrer;
+          const referrerMatch = referrer.match(saraminDetailPattern);
+          if (referrerMatch) {
+            const id = referrerMatch[1];
+            const cached = sessionStorage.getItem(`smj_saramin_${id}`);
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (parsed?.company) saraminContext.company = parsed.company;
+              if (parsed?.title) saraminContext.title = parsed.title;
+              saraminContext.jobId = id;
+              saraminContext.jobUrl = `${location.protocol}//${location.hostname}/zf_user/jobs/view/${id}`;
+            }
+          }
+        } catch {}
+        onApplyCompleted("url-saramin-poll", "saramin");
+        return;
+      }
+
+      // 상세 페이지로 이동 시 다음 트리거를 위해 리셋
+      const wantedDetail = current.match(wantedDetailPattern);
+      const saraminDetail = current.match(saraminDetailPattern);
+      if (
+        (wantedDetail && wantedDetail[1] !== lastJobIdTriggered) ||
+        (saraminDetail && saraminDetail[1] !== lastJobIdTriggered)
+      ) {
         hasTriggered = false;
-        console.log("SMJ: reset trigger for new detail page (poll)", d[1]);
+        console.log(
+          "SMJ: reset trigger for new detail page (poll)",
+          wantedDetail?.[1] || saraminDetail?.[1]
+        );
       }
     }, 400);
   })();

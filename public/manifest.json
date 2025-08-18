@@ -13,7 +13,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.wanted.co.kr/*"],
+      "matches": ["*://*.wanted.co.kr/*", "*://*.saramin.co.kr/*"],
       "js": ["content.js"]
     }
   ],
