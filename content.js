@@ -567,4 +567,168 @@ if (__SMJ_ALLOWED__) {
       }
     }, 400);
   })();
+
+  // 2) DOM 내용(완료 메시지) 감지: MutationObserver
+  (function observeApplyCompletionMessages() {
+    // 사람인 지원 완료 메시지 패턴들
+    const SARAMIN_SUCCESS_PATTERNS = [
+      /입사지원\s*완료/i,
+      /지원\s*완료/i,
+      /지원이\s*완료/i,
+      /지원서\s*제출\s*완료/i,
+      /정상적으로\s*지원/i,
+      /지원하였습니다/i,
+      /지원서가\s*접수/i,
+    ];
+
+    // 원티드 지원 완료 메시지 패턴들
+    const WANTED_SUCCESS_PATTERNS = [
+      /지원\s*완료/i,
+      /지원이\s*완료/i,
+      /지원서\s*제출\s*완료/i,
+      /정상적으로\s*지원/i,
+      /지원하였습니다/i,
+      /apply\s*completed/i,
+      /application\s*submitted/i,
+    ];
+
+    function checkForSuccessMessage(element) {
+      if (!element || !element.textContent) return false;
+
+      const text = element.textContent.trim();
+      if (!text) return false;
+
+      const patterns = window.location.hostname.includes("saramin.co.kr")
+        ? SARAMIN_SUCCESS_PATTERNS
+        : WANTED_SUCCESS_PATTERNS;
+
+      return patterns.some((pattern) => pattern.test(text));
+    }
+
+    function scanExistingElements() {
+      // 페이지 로드 시 이미 존재하는 성공 메시지 확인
+      const selectors = [
+        // 사람인 가능한 성공 메시지 컨테이너들
+        ".alert",
+        ".alert-success",
+        ".success",
+        ".complete",
+        ".done",
+        ".message",
+        ".msg",
+        ".notification",
+        ".notice",
+        ".popup",
+        ".modal-body",
+        ".toast",
+        ".snackbar",
+        // 원티드 가능한 성공 메시지 컨테이너들
+        '[class*="success"]',
+        '[class*="complete"]',
+        '[class*="done"]',
+        '[class*="message"]',
+        '[class*="alert"]',
+        '[class*="toast"]',
+        '[class*="notification"]',
+        '[class*="modal"]',
+      ];
+
+      for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        for (const element of elements) {
+          if (checkForSuccessMessage(element)) {
+            console.log(
+              "SMJ: 기존 성공 메시지 발견:",
+              element.textContent.trim()
+            );
+            const platform = window.location.hostname.includes("saramin.co.kr")
+              ? "saramin"
+              : "wanted";
+            onApplyCompleted("dom-existing", platform);
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // MutationObserver로 새로 추가되는 요소들 감시
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        // 새로 추가된 노드들 확인
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            // 추가된 요소 자체가 성공 메시지인지 확인
+            if (checkForSuccessMessage(node)) {
+              console.log(
+                "SMJ: 새로운 성공 메시지 감지:",
+                node.textContent.trim()
+              );
+              const platform = window.location.hostname.includes(
+                "saramin.co.kr"
+              )
+                ? "saramin"
+                : "wanted";
+              onApplyCompleted("dom-new", platform);
+              return;
+            }
+
+            // 추가된 요소의 하위 요소들도 확인
+            const successElements =
+              node.querySelectorAll && node.querySelectorAll("*");
+            if (successElements) {
+              for (const elem of successElements) {
+                if (checkForSuccessMessage(elem)) {
+                  console.log(
+                    "SMJ: 새로운 성공 메시지 감지 (하위):",
+                    elem.textContent.trim()
+                  );
+                  const platform = window.location.hostname.includes(
+                    "saramin.co.kr"
+                  )
+                    ? "saramin"
+                    : "wanted";
+                  onApplyCompleted("dom-child", platform);
+                  return;
+                }
+              }
+            }
+          }
+        }
+
+        // 텍스트 내용이 변경된 경우도 확인
+        if (mutation.type === "characterData" && mutation.target.parentNode) {
+          if (checkForSuccessMessage(mutation.target.parentNode)) {
+            console.log(
+              "SMJ: 텍스트 변경으로 성공 메시지 감지:",
+              mutation.target.parentNode.textContent.trim()
+            );
+            const platform = window.location.hostname.includes("saramin.co.kr")
+              ? "saramin"
+              : "wanted";
+            onApplyCompleted("dom-text-change", platform);
+            return;
+          }
+        }
+      }
+    });
+
+    // 관찰 시작
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+
+    // 페이지 로드 완료 후 기존 요소들 스캔
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => {
+        setTimeout(scanExistingElements, 1000);
+      });
+    } else {
+      setTimeout(scanExistingElements, 1000);
+    }
+
+    console.log("SMJ: DOM 성공 메시지 감시 시작됨");
+  })();
 }
