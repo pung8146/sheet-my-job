@@ -722,7 +722,7 @@ if (__SMJ_ALLOWED__) {
   (function observeApplyCompletionMessages() {
     // 사람인 지원 완료 메시지 패턴들
     const SARAMIN_SUCCESS_PATTERNS = [
-      /입사지원\s*완료[!]?/i, // 느낌표 포함 가능
+      /입사지원\s*완료[!]?/i,
       /지원\s*완료[!]?/i,
       /지원이\s*완료[!]?/i,
       /지원서\s*제출\s*완료[!]?/i,
@@ -735,8 +735,11 @@ if (__SMJ_ALLOWED__) {
       /이력서\s*제출\s*완료[!]?/i,
       /지원서\s*등록\s*완료[!]?/i,
       /지원\s*처리\s*완료[!]?/i,
-      /입사지원.*완료/i, // 더 유연한 패턴
+      /입사지원.*완료/i,
       /지원.*완료/i,
+      /이력서.*제출.*완료/i,
+      /지원서.*전송.*성공/i,
+      /입사지원이.*접수/i,
     ];
 
     // 원티드 지원 완료 메시지 패턴들
@@ -748,6 +751,8 @@ if (__SMJ_ALLOWED__) {
       /지원하였습니다/i,
       /apply\s*completed/i,
       /application\s*submitted/i,
+      /지원.*성공/i,
+      /지원.*전송.*완료/i,
     ];
 
     function checkForSuccessMessage(element) {
@@ -768,6 +773,10 @@ if (__SMJ_ALLOWED__) {
       const selectors = [
         // 사람인 가능한 성공 메시지 컨테이너들
         ".wrap_resume_layer", // 사람인 입사지원 완료 모달
+        ".layer_popup", // 사람인 레이어 팝업
+        ".popup_layer", // 사람인 팝업 레이어
+        ".apply_layer", // 사람인 지원 레이어
+        ".apply_complete", // 사람인 지원 완료
         ".alert",
         ".alert-success",
         ".success",
@@ -778,6 +787,8 @@ if (__SMJ_ALLOWED__) {
         ".notification",
         ".notice",
         ".popup",
+        ".modal",
+        ".modal-content",
         ".modal-body",
         ".toast",
         ".snackbar",
@@ -790,25 +801,69 @@ if (__SMJ_ALLOWED__) {
         '[class*="toast"]',
         '[class*="notification"]',
         '[class*="modal"]',
+        '[class*="popup"]',
+        '[class*="layer"]',
+        '[class*="apply"]',
+        // 범용 모달/다이얼로그 셀렉터
+        '[role="dialog"]',
+        '[role="alertdialog"]',
+        // 가시성이 있는 오버레이들
+        '[style*="display: block"]',
+        '[style*="visibility: visible"]',
+        // z-index가 높은 요소들 (모달일 가능성)
+        '[style*="z-index"]',
       ];
 
       for (const selector of selectors) {
-        const elements = document.querySelectorAll(selector);
-        for (const element of elements) {
-          if (checkForSuccessMessage(element)) {
-            console.log(
-              "SMJ: 기존 성공 메시지 발견:",
-              element.textContent.trim()
-            );
-            const platform = window.location.hostname.includes("saramin.co.kr")
-              ? "saramin"
-              : "wanted";
-            onApplyCompleted("dom-existing", platform);
-            return true;
+        try {
+          const elements = document.querySelectorAll(selector);
+          for (const element of elements) {
+            // 요소가 실제로 보이는지 확인
+            if (isElementVisible(element) && checkForSuccessMessage(element)) {
+              console.log(
+                "SMJ: 기존 성공 메시지 발견:",
+                element.textContent.trim(),
+                "셀렉터:",
+                selector
+              );
+              const platform = window.location.hostname.includes(
+                "saramin.co.kr"
+              )
+                ? "saramin"
+                : "wanted";
+              onApplyCompleted("dom-existing", platform);
+              return true;
+            }
           }
+        } catch (e) {
+          console.warn("SMJ: 셀렉터 스캔 중 오류:", selector, e);
         }
       }
       return false;
+    }
+
+    // 요소가 실제로 화면에 보이는지 확인하는 함수
+    function isElementVisible(element) {
+      if (!element) return false;
+
+      try {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+
+        return (
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0" &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.top < window.innerHeight &&
+          rect.bottom > 0 &&
+          rect.left < window.innerWidth &&
+          rect.right > 0
+        );
+      } catch (e) {
+        return true; // 오류 시에는 보이는 것으로 간주
+      }
     }
 
     // MutationObserver로 새로 추가되는 요소들 감시
@@ -817,6 +872,9 @@ if (__SMJ_ALLOWED__) {
         // 새로 추가된 노드들 확인
         for (const node of mutation.addedNodes) {
           if (node.nodeType === Node.ELEMENT_NODE) {
+            // 추가된 요소가 보이는지 확인
+            if (!isElementVisible(node)) continue;
+
             // 추가된 요소 자체가 성공 메시지인지 확인
             if (checkForSuccessMessage(node)) {
               console.log(
@@ -832,56 +890,107 @@ if (__SMJ_ALLOWED__) {
               return;
             }
 
-            // 사람인 입사지원 완료 모달 특별 처리
-            if (
-              window.location.hostname.includes("saramin.co.kr") &&
-              (node.classList?.contains("wrap_resume_layer") ||
-                node.querySelector?.(".wrap_resume_layer"))
-            ) {
-              console.log("SMJ: 사람인 입사지원 모달 감지");
-              // 모달 내부에서 입사지원 완료 텍스트 확인
-              const modalContent = node.classList?.contains("wrap_resume_layer")
-                ? node
-                : node.querySelector(".wrap_resume_layer");
-              if (modalContent && checkForSuccessMessage(modalContent)) {
-                console.log(
-                  "SMJ: 사람인 입사지원 완료 모달에서 성공 메시지 확인:",
-                  modalContent.textContent.trim()
-                );
-                onApplyCompleted("dom-saramin-modal", "saramin");
-                return;
+            // 사람인 모달 특별 처리 (다양한 패턴)
+            if (window.location.hostname.includes("saramin.co.kr")) {
+              const modalSelectors = [
+                ".wrap_resume_layer",
+                ".layer_popup",
+                ".popup_layer",
+                ".apply_layer",
+                ".apply_complete",
+              ];
+
+              for (const selector of modalSelectors) {
+                if (
+                  node.classList?.contains(selector.substring(1)) ||
+                  node.querySelector?.(selector)
+                ) {
+                  console.log(`SMJ: 사람인 모달 감지 (${selector})`);
+
+                  const modalContent = node.classList?.contains(
+                    selector.substring(1)
+                  )
+                    ? node
+                    : node.querySelector(selector);
+
+                  if (modalContent && checkForSuccessMessage(modalContent)) {
+                    console.log(
+                      "SMJ: 사람인 모달에서 성공 메시지 확인:",
+                      modalContent.textContent.trim()
+                    );
+                    onApplyCompleted("dom-saramin-modal", "saramin");
+                    return;
+                  }
+                }
               }
             }
 
-            // 추가된 요소의 하위 요소들도 확인
-            const successElements =
-              node.querySelectorAll && node.querySelectorAll("*");
-            if (successElements) {
-              for (const elem of successElements) {
-                if (checkForSuccessMessage(elem)) {
+            // 원티드 모달 특별 처리
+            if (window.location.hostname.includes("wanted.co.kr")) {
+              const wantedModalPatterns = [
+                /modal/i,
+                /dialog/i,
+                /popup/i,
+                /overlay/i,
+                /complete/i,
+                /success/i,
+              ];
+
+              const nodeClassName = node.className || "";
+              if (
+                wantedModalPatterns.some((pattern) =>
+                  pattern.test(nodeClassName)
+                )
+              ) {
+                console.log("SMJ: 원티드 모달 감지:", nodeClassName);
+                if (checkForSuccessMessage(node)) {
                   console.log(
-                    "SMJ: 새로운 성공 메시지 감지 (하위):",
-                    elem.textContent.trim()
+                    "SMJ: 원티드 모달에서 성공 메시지 확인:",
+                    node.textContent.trim()
                   );
-                  const platform = window.location.hostname.includes(
-                    "saramin.co.kr"
-                  )
-                    ? "saramin"
-                    : "wanted";
-                  onApplyCompleted("dom-child", platform);
+                  onApplyCompleted("dom-wanted-modal", "wanted");
                   return;
                 }
               }
+            }
+
+            // 추가된 요소의 하위 요소들도 확인 (모든 가시적 요소)
+            try {
+              const successElements =
+                node.querySelectorAll && node.querySelectorAll("*");
+              if (successElements) {
+                for (const elem of successElements) {
+                  if (isElementVisible(elem) && checkForSuccessMessage(elem)) {
+                    console.log(
+                      "SMJ: 새로운 성공 메시지 감지 (하위):",
+                      elem.textContent.trim()
+                    );
+                    const platform = window.location.hostname.includes(
+                      "saramin.co.kr"
+                    )
+                      ? "saramin"
+                      : "wanted";
+                    onApplyCompleted("dom-child", platform);
+                    return;
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("SMJ: 하위 요소 스캔 중 오류:", e);
             }
           }
         }
 
         // 텍스트 내용이 변경된 경우도 확인
         if (mutation.type === "characterData" && mutation.target.parentNode) {
-          if (checkForSuccessMessage(mutation.target.parentNode)) {
+          const parentElement = mutation.target.parentNode;
+          if (
+            isElementVisible(parentElement) &&
+            checkForSuccessMessage(parentElement)
+          ) {
             console.log(
               "SMJ: 텍스트 변경으로 성공 메시지 감지:",
-              mutation.target.parentNode.textContent.trim()
+              parentElement.textContent.trim()
             );
             const platform = window.location.hostname.includes("saramin.co.kr")
               ? "saramin"
@@ -890,15 +999,83 @@ if (__SMJ_ALLOWED__) {
             return;
           }
         }
+
+        // 속성 변경 감지 (display, visibility, opacity 등)
+        if (mutation.type === "attributes") {
+          const target = mutation.target;
+          if (
+            mutation.attributeName === "style" ||
+            mutation.attributeName === "class"
+          ) {
+            // 요소가 새로 보이게 되었는지 확인
+            if (isElementVisible(target) && checkForSuccessMessage(target)) {
+              console.log(
+                "SMJ: 속성 변경으로 성공 메시지 감지:",
+                target.textContent.trim()
+              );
+              const platform = window.location.hostname.includes(
+                "saramin.co.kr"
+              )
+                ? "saramin"
+                : "wanted";
+              onApplyCompleted("dom-attr-change", platform);
+              return;
+            }
+          }
+        }
       }
     });
 
-    // 관찰 시작
+    // 관찰 시작 (속성 변경도 포함)
     observer.observe(document.body, {
       childList: true,
       subtree: true,
       characterData: true,
+      attributes: true,
+      attributeFilter: ["style", "class"],
     });
+
+    // 추가: 주기적으로 새로운 모달 체크 (일부 동적 모달이 감지되지 않을 경우 대비)
+    let lastModalCheck = 0;
+    const MODAL_CHECK_INTERVAL = 2000; // 2초마다
+
+    const periodicModalCheck = () => {
+      const now = Date.now();
+      if (now - lastModalCheck < MODAL_CHECK_INTERVAL) return;
+      lastModalCheck = now;
+
+      // 높은 z-index를 가진 요소들 체크 (모달일 가능성)
+      const highZIndexElements = Array.from(
+        document.querySelectorAll("*")
+      ).filter((el) => {
+        try {
+          const style = window.getComputedStyle(el);
+          const zIndex = parseInt(style.zIndex);
+          return zIndex > 999 && isElementVisible(el);
+        } catch {
+          return false;
+        }
+      });
+
+      for (const element of highZIndexElements) {
+        if (checkForSuccessMessage(element)) {
+          console.log(
+            "SMJ: 주기적 체크로 성공 메시지 감지:",
+            element.textContent.trim(),
+            "z-index:",
+            window.getComputedStyle(element).zIndex
+          );
+          const platform = window.location.hostname.includes("saramin.co.kr")
+            ? "saramin"
+            : "wanted";
+          onApplyCompleted("dom-periodic", platform);
+          return;
+        }
+      }
+    };
+
+    // 주기적 체크 시작
+    setInterval(periodicModalCheck, MODAL_CHECK_INTERVAL);
 
     // 페이지 로드 완료 후 기존 요소들 스캔
     if (document.readyState === "loading") {
@@ -909,6 +1086,78 @@ if (__SMJ_ALLOWED__) {
       setTimeout(scanExistingElements, 1000);
     }
 
-    console.log("SMJ: DOM 성공 메시지 감시 시작됨");
+    // 3) 추가 모달 감지 메소드들
+
+    // 포커스 이벤트 기반 모달 감지 (모달이 포커스를 받을 때)
+    document.addEventListener("focusin", (event) => {
+      const target = event.target;
+      if (target && isElementVisible(target)) {
+        // 포커스된 요소가 모달 내부에 있는지 확인
+        const modalParent = target.closest(
+          '[role="dialog"], [role="alertdialog"], .modal, .popup, .layer_popup, .wrap_resume_layer'
+        );
+        if (modalParent && checkForSuccessMessage(modalParent)) {
+          console.log(
+            "SMJ: 포커스 이벤트로 모달 감지:",
+            modalParent.textContent.trim()
+          );
+          const platform = window.location.hostname.includes("saramin.co.kr")
+            ? "saramin"
+            : "wanted";
+          onApplyCompleted("dom-focus", platform);
+        }
+      }
+    });
+
+    // 클릭 이벤트 후 모달 체크 (지원 버튼 클릭 후 모달이 나타날 수 있음)
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (
+        target &&
+        (target.textContent?.includes("지원") ||
+          target.textContent?.includes("apply") ||
+          target.textContent?.includes("Apply") ||
+          target.className?.includes("apply") ||
+          target.className?.includes("submit"))
+      ) {
+        // 클릭 후 잠시 후에 모달 체크
+        setTimeout(() => {
+          scanExistingElements();
+        }, 500);
+
+        setTimeout(() => {
+          scanExistingElements();
+        }, 1500);
+      }
+    });
+
+    // 키보드 이벤트 (ESC 키나 Enter 키 후 모달 체크)
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === "Escape") {
+        setTimeout(() => {
+          scanExistingElements();
+        }, 300);
+      }
+    });
+
+    // 윈도우 포커스 변경 감지 (새 탭에서 돌아왔을 때 등)
+    window.addEventListener("focus", () => {
+      setTimeout(() => {
+        scanExistingElements();
+      }, 500);
+    });
+
+    // 스크롤 이벤트 (일부 모달이 스크롤 시 나타날 수 있음)
+    let scrollTimeout;
+    window.addEventListener("scroll", () => {
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        scanExistingElements();
+      }, 300);
+    });
+
+    console.log(
+      "SMJ: 강화된 DOM 성공 메시지 감시 시작됨 (MutationObserver + 이벤트 기반 + 주기적 체크)"
+    );
   })();
 }
