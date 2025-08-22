@@ -42,11 +42,12 @@ function ensureToastContainer() {
     const style = document.createElement("style");
     style.id = styleId;
     style.textContent = `
-      #smj-toast-container { position: fixed; top: 16px; right: 16px; z-index: 2147483647; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
-      .smj-toast { min-width: 240px; max-width: 360px; color: #fff; padding: 10px 12px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.18); font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; opacity: 0; transform: translateY(-8px); transition: opacity .2s ease, transform .2s ease; pointer-events: auto; }
-      .smj-toast.show { opacity: 1; transform: translateY(0); }
-      .smj-toast.success { background: #1f9d55; }
-      .smj-toast.error { background: #d64545; }
+      #smj-toast-container { position: fixed; top: 20px; right: 20px; z-index: 2147483647; display: flex; flex-direction: column; gap: 12px; pointer-events: none; }
+      .smj-toast { min-width: 280px; max-width: 400px; color: #fff; padding: 16px 20px; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.24); font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; opacity: 0; transform: translateY(-12px) scale(0.95); transition: all .3s cubic-bezier(0.4, 0, 0.2, 1); pointer-events: auto; cursor: pointer; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(8px); }
+      .smj-toast.show { opacity: 1; transform: translateY(0) scale(1); }
+      .smj-toast.success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+      .smj-toast.error { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+      .smj-toast:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
     `;
     document.head.appendChild(style);
   }
@@ -55,7 +56,7 @@ function ensureToastContainer() {
   document.documentElement.appendChild(container);
 }
 
-function showToast(message, type = "success", durationMs = 2800) {
+function showToast(message, type = "success", durationMs = 4000) {
   try {
     ensureToastContainer();
     const container = document.getElementById("smj-toast-container");
@@ -71,32 +72,40 @@ function showToast(message, type = "success", durationMs = 2800) {
 
     // 강제로 스타일 적용하여 토스트가 확실히 보이도록 함
     toast.style.cssText = `
-      min-width: 240px;
-      max-width: 360px;
+      min-width: 280px;
+      max-width: 400px;
       color: #fff;
-      padding: 10px 12px;
-      border-radius: 8px;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.18);
-      font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
-      background: ${type === "error" ? "#d64545" : "#1f9d55"};
+      padding: 16px 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.24);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      background: ${
+        type === "error"
+          ? "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)"
+          : "linear-gradient(135deg, #10b981 0%, #059669 100%)"
+      };
       position: relative;
       z-index: 2147483647;
       pointer-events: auto;
       opacity: 1;
-      transform: translateY(0);
-      transition: opacity .2s ease, transform .2s ease;
+      transform: translateY(0) scale(1);
+      transition: all .3s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.2);
+      backdrop-filter: blur(8px);
     `;
 
     requestAnimationFrame(() => toast.classList.add("show"));
     console.log(`SMJ Toast 표시: [${type.toUpperCase()}] ${message}`);
 
     const remove = () => {
-      toast.classList.remove("show");
+      toast.style.opacity = "0";
+      toast.style.transform = "translateY(-12px) scale(0.95)";
       setTimeout(() => {
         if (toast.parentNode) {
           toast.remove();
         }
-      }, 200);
+      }, 300);
     };
     setTimeout(remove, durationMs);
     toast.addEventListener("click", remove);
@@ -308,7 +317,7 @@ if (__SMJ_ALLOWED__) {
         if (chrome.runtime.lastError) {
           console.error("Message sending failed:", chrome.runtime.lastError);
           showToast(
-            `저장 실패: ${
+            `❌ 저장 실패: ${
               chrome.runtime.lastError.message || "메시지 전송 오류"
             }`,
             "error"
@@ -316,18 +325,21 @@ if (__SMJ_ALLOWED__) {
           return;
         }
         if (!response) {
-          showToast("저장 실패: 응답 없음", "error");
+          showToast("❌ 저장 실패: 서버 응답 없음", "error");
           return;
         }
         if (response.status === "에러") {
           console.error("Background error:", response.message);
           showToast(
-            `저장 실패: ${response.message || "알 수 없는 오류"}`,
+            `❌ 저장 실패: ${response.message || "알 수 없는 오류"}`,
             "error"
           );
         } else {
           console.log("Background script responded:", response.status);
-          showToast("저장 성공: 구글 시트에 기록되었습니다.", "success");
+          showToast(
+            "🎉 사람인 지원 정보가 구글 시트에 성공적으로 저장되었습니다!",
+            "success"
+          );
         }
       }
     );
